@@ -1,0 +1,253 @@
+#------------------------------ ###### ---------------------------------|
+#    -- ================================================================|
+#    -- Author:		    <Luis A. Rodriguez G.>           									|
+#    -- Create date:  <05/08/2019>										                  |
+#    -- Last modification date:  <05/08/2019>							              |
+#    -- Description:	<Análisis Base Datos Delitos CDMX y Metro>        |
+#    -- ================================================================|
+#------------------------------ ###### ---------------------------------|
+
+#####                                   rm(list=ls())
+
+########                 Librerias, Descripción ########  
+
+library(sf)              # Simple Features for R
+library(dplyr)           # Grammar of Data Manipulation
+library(tidyr)           # Easily Tidy Data with 'spread()' and 'gather()' 
+library(sp)              # Classes and Methods for Spatial Data
+library(raster)          # Geographic Data Analysis and Modeling
+library(rgeos)           # Interface to Geometry Engine
+library(rgbif)           # Interface to the Global 'Biodiversity' Information Facility API
+library(viridis)         # Default Color Maps from 'matplotlib'
+library(gridExtra)       # Miscellaneous Functions for "Grid" Graphics
+library(rasterVis)       # Visualization Methods for Raster Data
+library(caTools)         # Tools: moving window statistics, GIF, Base64, ROC 
+library(corrplot)        # Visualization of a Correlation Matrix
+library(dygraphs)        # Interactive Time Series 	
+library(data.table)	     # Data information handle
+library(directlabels)    # Direct Labels for Multicolor Plots
+library(forecast)        # Forecasting Functions for Time Series and Linear Models
+library(factoextra)      # Extract and Visualize the Results of Multivariate Data Analyses
+library(GGally)          # Extension to ggplot
+library(ggcorrplot)      # Visualization of Correlation Matrix using ggplot
+library(ggrepel)	       # Automatically Position Non-Overlapping Text Labels with 'ggplot2
+library(gmapsdistance)   # Distance and Travel Time Between Two Points from Google Maps
+library(geosphere)       # Compute various aspects of distance
+library(ggplot2)         # Create Elegant Data Visualisations Using the Grammar of Graphics
+
+#####                    rm(list=ls())
+set.seed(1)
+
+######################################## PROCESAMIENTO DATA ########################################
+
+# Ruta de los Atractores
+DirectorioDatos <- "Directorio"
+setwd(DirectorioDatos)
+
+DelitosURL <- "carpetas-de-investigacion-pgj-cdmx.csv"
+Delitos <- read.csv(DelitosURL, header = TRUE, sep = ";")
+
+DelitosMuestra <- head(Delitos,1000)
+
+View(DelitosMuestra)
+
+############################### INICIO ANALISIS ###############################
+
+NuevasCol <- c("anio_hechos", colnames(Delitos)[2:5], "fiscalia", colnames(Delitos)[7:18])
+colnames(Delitos) <- NuevasCol
+
+#Separa Fecha y Hora delitos. 
+
+DelitosN <- Delitos%>%
+  separate(fecha_hechos, c("Fecha", "Hora"), " ", remove = FALSE)
+
+# View(DelitosN)
+# str(DelitosN)
+
+# Delitos por mes y año.
+
+DelitosAnual <- DelitosN%>%
+  filter(!is.na(anio_hechos) & !is.na(mes_hechos) &  anio_hechos>=2016)%>%
+  mutate(Anio = format(as.Date(Fecha), "%Y"),
+         Mes  = format(as.Date(Fecha), "%m"))%>%
+  group_by(Anio, Mes)%>%
+  summarise(DelitosCometidos = n())%>%
+  mutate(Fecha = lubridate::ymd(paste(Anio,Mes,"01", sep = "-")))
+  
+ggplot(data = DelitosAnual, aes(x = Fecha, y = DelitosCometidos))+
+  geom_line(color = "blue", linetype = "dashed", size = 1)+
+  geom_point(col = "red")+
+  theme_bw()+
+  xlab("Fecha") +
+  ylab("Número de delitos") +
+  ggtitle("Delitos cometidos CDMX, 2016 - 2019")+
+  scale_y_continuous(breaks = c(15000, 16000, 17000, 18000, 19000, 20000,21000,22000), 
+                     labels = c("15,000","16,000","17,000","18,000", "19,000", "20,000", "21,000", "22,000"))+
+  scale_x_date(date_breaks = "months", date_labels = "%b %Y", expand = c(0.01,0))+
+  theme(axis.text.x = element_text(angle = 75, hjust = 1))
+  
+
+# Meses con mayor número de delitos.
+
+DelitosMensual <- DelitosN%>%
+  filter(!is.na(anio_hechos) & !is.na(mes_hechos) &  anio_hechos>=2016)%>%
+  mutate(Mes  = format(as.Date(Fecha), "%m"))%>%
+  dplyr::group_by(Mes)%>%
+  dplyr::summarize(Delitos = n())%>%
+  mutate(NombreMes = month.abb)
+
+str(DelitosMensual)
+
+ggplot(data = DelitosMensual, aes(x = reorder(NombreMes, as.numeric(Mes)), y = Delitos))+
+  geom_bar(stat="identity", position=position_dodge(), fill = "blue")+
+  theme_bw() + 
+  xlab("Mes") +
+  ylab("Número de delitos") +
+  ggtitle("Número de delitos por mes, 2016 - 2019.") +
+  scale_y_continuous(breaks = c(0, 20000, 40000, 60000, 80000), 
+                     labels = c("0", "20,000", "40,000", "60,000", "80,000"), limits = c(0,8e4)) +
+  theme(axis.text.x = element_text(angle = 75, hjust = 1))
+
+# View(DelitosMensual)
+
+
+### Alcaldias con mayor delincuencia. 
+
+DelitosAlcaldia <- DelitosN%>%
+  filter(!is.na(anio_hechos) & !is.na(mes_hechos) &  anio_hechos>=2016 & !is.na(alcaldia_hechos))%>%
+  dplyr::group_by(alcaldia_hechos)%>%
+  dplyr::summarize(Delitos = n())%>%
+  arrange(desc(Delitos))%>%
+  top_n(n = 16, wt = Delitos)
+
+ggplot(data = DelitosAlcaldia, aes(x = reorder(alcaldia_hechos, -Delitos), y = Delitos))+
+  geom_bar(stat="identity", position=position_dodge(), fill = "darkgreen")+
+  theme_bw() + 
+  xlab("Alcaldia") +
+  ylab("Número de delitos") +
+  ggtitle("Número de delitos por Alcaldia CDMX, 2016 - 2019.") +
+  scale_y_continuous(breaks = c(0, 20000, 40000, 60000, 80000, 100000, 120000), 
+                     labels = c("0", "20,000", "40,000", "60,000", "80,000", "100,000", "120,000")) +
+  theme(axis.text.x = element_text(angle = 75, hjust = 1))
+
+View(DelitosAlcaldia)
+
+############################## Mapa de Calor##############################
+
+######################################## FUNCIONES ########################################
+ModificaAtractor <- function(CapaAtractor, PoligonoBase, sq_grid_c){
+  
+  AtractorDF <- fortify(CapaAtractor)
+  
+  AtractorDF <- AtractorDF%>%
+    distinct(long, lat, .keep_all = TRUE)   
+  
+  colnames(AtractorDF)[which(names(AtractorDF) == "id")] <- "Identificador"
+  
+  coordinates(AtractorDF) <- ~ long + lat
+  projection(AtractorDF)  <- projection(sq_grid_c)
+  AtractorShape <- spTransform(AtractorDF, projection(PoligonoBase))
+  
+  return(AtractorShape)
+  
+}
+make_grid <- function(x, type, cell_width, cell_area, clip = FALSE) {
+  if (!type %in% c("square", "hexagonal")) {
+    stop("El tipo debe ser 'cuadrado' o 'hexagonal'")
+  }
+  
+  if (missing(cell_width)) {
+    if (missing(cell_area)) {
+      stop("Se debe definir el tamaño del área")
+    } else {
+      if (type == "square") {
+        cell_width <- sqrt(cell_area)
+      } else if (type == "hexagonal") {
+        cell_width <- sqrt(2 * cell_area / sqrt(3))
+      }
+    }
+  }
+  # Define el tamaño de las celdas.
+  ext <- as(extent(x) + cell_width, "SpatialPolygons")
+  projection(ext) <- projection(x)
+  # Genera el mallado
+  if (type == "square") {
+    g <- raster(ext, resolution = cell_width)
+    g <- as(g, "SpatialPolygons")
+  } else if (type == "hexagonal") {
+    # Genera el vector de centros poligonos.
+    g <- spsample(ext, type = "hexagonal", cellsize = cell_width, offset = c(0, 0))
+    # Convierte los centros a poligonos. 
+    g <- HexPoints2SpatialPolygons(g, dx = cell_width)
+  }
+  
+  # Define los bordes al área de estudio. 
+  if (clip) {
+    g <- gIntersection(g, x, byid = TRUE)
+  } else {
+    g <- g[x, ]
+  }
+  # Limpia los id.
+  row.names(g) <- as.character(1:length(g))
+  return(g)
+}
+######################################## PROCESAMIENTO SHAPEFILE ########################################
+
+# Ruta de la Shape File
+DirectorioShapeFiles <- "ShapeFileURL"
+NombrePoligonoBase <- "09ent.shp"
+
+TipoRed      <- "hexagonal"   # Opciones: "square", "hexagonal"
+AreaPoligono <- 360000    # En metros, ejemplo: 300m * 300m = 90000
+
+setwd(DirectorioShapeFiles) 
+PoligonoBase <- readOGR(NombrePoligonoBase)
+PoligonoBase <- spTransform(PoligonoBase, CRS("+init=epsg:4326 +proj=utm +zone=13N +datum=WGS84 +units=m"))
+
+sq_grid_c <- make_grid(PoligonoBase, type = TipoRed, cell_area = AreaPoligono, clip = TRUE)
+plot(PoligonoBase, col = "grey50", bg = "light blue", axes = FALSE)
+plot(sq_grid_c, border = "orange", add = TRUE)
+
+######################################## PROCESAMIENTO DATA ########################################
+
+DelitosShape <- subset(DelitosN, select = c("anio_hechos", "mes_hechos", "delito", "alcaldia_hechos",
+                                            "longitud", "latitud"))
+
+DelitosShape <- DelitosShape%>%
+  filter(!is.na(longitud) & !is.na(latitud) & anio_hechos >= 2016)
+
+coordinates(DelitosShape) <- ~ longitud + latitud
+proj4string(DelitosShape) <- CRS('+init=EPSG:4326 +proj=longlat +zone=13N +datum=WGS84 +units=m')
+DelitosShape <- spTransform(DelitosShape, projection(sq_grid_c))
+
+# writeOGR(EscuelaShape, '.', layer = "EscuelasUbicacion", driver = "ESRI Shapefile")
+
+AtractorShape <- DelitosShape
+
+##### Cálculo de densidad de puntos.
+
+fill_missing  <- expand.grid(id = row.names(sq_grid_c), stringsAsFactors = FALSE)
+
+point_density <- over(sq_grid_c, AtractorShape, returnList = TRUE)%>%
+  plyr::ldply(.fun = function(x) x, .id = "id") %>%
+  mutate(id = as.character(id)) %>%
+  count(id)%>% 
+  left_join(fill_missing, ., by = c("id"))%>%
+  mutate(n = as.integer(ifelse(is.na(n), 0, n)))%>%
+  dplyr::select(n)%>%
+  SpatialPolygonsDataFrame(sq_grid_c, .)
+
+spplot(point_density ,main = "Número de Delitos CDMX, 2016 - 2019",
+       col.regions = c("grey50", rev(heat.colors(255))),
+       colorkey = list(
+         at = seq(0, 5000, length.out = 11),
+         labels = list(
+           at = seq(0, 5000, length.out = 11),
+           labels = seq(0, 5000, length.out = 11)
+         )
+       ),
+
+       xlim = bbexpand(bbox(point_density)[1, ], 0.01),
+       ylim = bbexpand(bbox(point_density)[2, ], 0.01))
+
+
